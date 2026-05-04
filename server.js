@@ -31,8 +31,6 @@ app.use(cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
-
-app.options("*", cors());
 app.use(express.json());
 
 const SCOPES = ["https://www.googleapis.com/auth/firebase.messaging"];
