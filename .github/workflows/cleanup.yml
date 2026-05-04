@@ -1,0 +1,30 @@
+name: Firebase Cleanup
+
+on:
+  schedule:
+    - cron: "*/7 * * * *"   # alle 7 Minuten
+  workflow_dispatch:        # manuell startbar
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Cleanup Script
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+        run: node cleanup.mjs
