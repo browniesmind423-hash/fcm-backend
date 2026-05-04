@@ -2,12 +2,37 @@ import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
 import pkg from "google-auth-library";
+import admin from "firebase-admin";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+import dotenv from "dotenv";
+
 const { google } = pkg;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config();
+
+// 🔥 Firebase Admin initialisieren
+admin.initializeApp({
+  credential: admin.credential.cert({
+    projectId: process.env.PROJECT_ID,
+    clientEmail: process.env.CLIENT_EMAIL,
+    privateKey: process.env.PRIVATE_KEY.replace(/\\n/g, "\n")
+  }),
+  databaseURL: `https://${process.env.PROJECT_ID}.firebaseio.com`
+});
+
+const db = admin.database();
 
 const app = express();
 app.use(cors({
-  origin: "https://italiaria-72bdb.web.app"
+  origin: "https://italiaria-72bdb.web.app",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+app.options("*", cors());
 app.use(express.json());
 
 const SCOPES = ["https://www.googleapis.com/auth/firebase.messaging"];
@@ -84,15 +109,11 @@ app.post("/send", async (req, res) => {
         body: JSON.stringify({
           message: {
             token,
-            notification: {
+            data: {
               title: finalTitle,
               body: finalBody,
-            },
-
-            // 🔥 NEU: DATA PAYLOAD für Service Worker
-            data: {
               status: sessionData.orderId ? "update" : "unknown"
-            }
+            },
           },
         }),
       }
@@ -105,9 +126,13 @@ app.post("/send", async (req, res) => {
       await db.ref(`sessions/${sessionId}`).update({
         fcmToken: null
       });
+        }
+
+    if (!response.ok) {
+      return res.status(400).json(data || { error: "FCM send failed" });
     }
 
-    res.status(response.ok ? 200 : 400).json(data);
+    res.status(200).json(data);
 
   } catch (err) {
     console.error("❌ Send error:", err);
