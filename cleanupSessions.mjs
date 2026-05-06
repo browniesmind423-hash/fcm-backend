@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { initializeApp } from "firebase/app";
+import { initializeApp, deleteApp } from "firebase/app";
 import { getDatabase, ref, get, remove } from "firebase/database";
 
 dotenv.config();
@@ -18,40 +18,62 @@ async function cleanup() {
   console.log("🔍 Starte Cleanup...");
 
   // ============================
-  // 1. Sessions laden
+  // 1. Daten laden
   // ============================
-  const sessionsRef = ref(db, "sessions");
-  const sessionsSnap = await get(sessionsRef);
-  const sessions = sessionsSnap.val() || {};
+  const [sessionsSnap, devicesSnap, ordersSnap] = await Promise.all([
+    get(ref(db, "sessions")),
+    get(ref(db, "devices")),
+    get(ref(db, "orders")), // 🔥 wichtig für Zombie Fix
+  ]);
 
-  // ============================
-  // 2. Devices laden
-  // ============================
-  const devicesRef = ref(db, "devices");
-  const devicesSnap = await get(devicesRef);
+  const sessions = sessionsSnap.val() || {};
   const devices = devicesSnap.val() || {};
+  const orders = ordersSnap.val() || {};
 
   const now = Date.now();
   const SIXTY_MINUTES = 60 * 60 * 1000;
   const activeDeviceIds = new Set();
 
   // ============================
-  // 3. Sessions aufräumen
+  // 2. Sessions aufräumen
   // ============================
   for (const [id, session] of Object.entries(sessions)) {
     const expired = session.expiresAt && now > session.expiresAt;
-    const pickedUp = session.pickedUp === true;
+    const pickedUpFlag = session.pickedUp === true;
     const isEmptySession = !session.orderId && !session.deviceId;
 
-    // 🔥 NEUE REGEL: Order älter als 60 Minuten und nicht abgeholt
+    // 🔥 Order laden
+    const order = session.orderId ? orders[session.orderId] : null;
+
+    // 🔥 NEU: Order ist abgeholt → Session löschen (egal was pickedUp sagt)
+    const orderIsPickedUp =
+      order &&
+      (order.status === "picked_up" ||
+        order.status === "completed" ||
+        order.status === "done");
+
+    // 🔥 alte Orders killen
     const orderTooOld =
       session.orderId &&
-      !session.pickedUp &&
+      !pickedUpFlag &&
       session.orderCreatedAt &&
       now - session.orderCreatedAt > SIXTY_MINUTES;
 
-    if (expired || pickedUp || isEmptySession || orderTooOld) {
-      console.log("🧹 Lösche Session:", id);
+    // 🔥 FINAL LOGIK
+    if (
+      expired ||
+      pickedUpFlag ||
+      isEmptySession ||
+      orderTooOld ||
+      orderIsPickedUp // 💣 Zombie Killer
+    ) {
+      console.log("🧹 Lösche Session:", id, {
+        expired,
+        pickedUpFlag,
+        orderTooOld,
+        orderIsPickedUp,
+      });
+
       await remove(ref(db, `sessions/${id}`));
       continue;
     }
@@ -63,7 +85,7 @@ async function cleanup() {
   }
 
   // ============================
-  // 4. Devices aufräumen
+  // 3. Devices aufräumen
   // ============================
   for (const [deviceId, device] of Object.entries(devices)) {
     const isUsed = activeDeviceIds.has(deviceId);
@@ -77,7 +99,24 @@ async function cleanup() {
   console.log("✨ Cleanup abgeschlossen.");
 }
 
-cleanup().catch((err) => {
-  console.error("❌ Fehler beim Cleanup:", err);
-  process.exit(1);
-});
+// ============================
+// 🚀 Runner (wichtig!)
+// ============================
+cleanup()
+  .then(async () => {
+    console.log("✅ Script beendet");
+
+    // Firebase sauber schließen (verhindert hängen!)
+    await deleteApp(app);
+
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("❌ Fehler beim Cleanup:", err);
+
+    try {
+      await deleteApp(app);
+    } catch {}
+
+    process.exit(1);
+  });
