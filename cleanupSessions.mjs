@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
-import { initializeApp, deleteApp } from "firebase/app";
-import { getDatabase, ref, get, remove } from "firebase/database";
+import { deleteApp } from "firebase/app";
+import { ref, get, remove } from "firebase/database";
+import admin from "firebase-admin";
 
 dotenv.config();
 
