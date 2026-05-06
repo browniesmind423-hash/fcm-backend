@@ -2,12 +2,13 @@ name: Firebase Cleanup
 
 on:
   schedule:
-    - cron: "*/7 * * * *"   # alle 7 Minuten
+    - cron: "*/30 * * * *"   # alle 30 Minuten
   workflow_dispatch:        # manuell startbar
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 1
 
     steps:
       - name: Checkout Repo
@@ -16,7 +17,7 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install Dependencies
         run: npm install
