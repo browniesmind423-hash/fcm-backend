@@ -1,7 +1,6 @@
 import dotenv from "dotenv";
-import { deleteApp } from "firebase/app";
-import { ref, get, remove } from "firebase/database";
-import admin from "firebase-admin";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getDatabase, ref, get, remove } from "firebase/database";
 
 dotenv.config();
 
@@ -18,13 +17,10 @@ const db = getDatabase(app);
 async function cleanup() {
   console.log("🔍 Starte Cleanup...");
 
-  // ============================
-  // 1. Daten laden
-  // ============================
   const [sessionsSnap, devicesSnap, ordersSnap] = await Promise.all([
     get(ref(db, "sessions")),
     get(ref(db, "devices")),
-    get(ref(db, "orders")), // 🔥 wichtig für Zombie Fix
+    get(ref(db, "orders")),
   ]);
 
   const sessions = sessionsSnap.val() || {};
@@ -35,89 +31,87 @@ async function cleanup() {
   const SIXTY_MINUTES = 60 * 60 * 1000;
   const activeDeviceIds = new Set();
 
+  const deletePromises = []; // 🔥 parallel deletes
+
   // ============================
-  // 2. Sessions aufräumen
+  // Sessions
   // ============================
   for (const [id, session] of Object.entries(sessions)) {
+    // 🔥 kaputte/null sessions sofort löschen
+    if (!session) {
+      console.log("🧹 Lösche kaputte Session:", id);
+      deletePromises.push(remove(ref(db, `sessions/${id}`)));
+      continue;
+    }
+
     const expired = session.expiresAt && now > session.expiresAt;
     const pickedUpFlag = session.pickedUp === true;
     const isEmptySession = !session.orderId && !session.deviceId;
 
-    // 🔥 Order laden
     const order = session.orderId ? orders[session.orderId] : null;
 
-    // 🔥 NEU: Order ist abgeholt → Session löschen (egal was pickedUp sagt)
     const orderIsPickedUp =
       order &&
       (order.status === "picked_up" ||
         order.status === "completed" ||
         order.status === "done");
 
-    // 🔥 alte Orders killen
     const orderTooOld =
       session.orderId &&
       !pickedUpFlag &&
       session.orderCreatedAt &&
       now - session.orderCreatedAt > SIXTY_MINUTES;
 
-    // 🔥 FINAL LOGIK
     if (
       expired ||
       pickedUpFlag ||
       isEmptySession ||
       orderTooOld ||
-      orderIsPickedUp // 💣 Zombie Killer
+      orderIsPickedUp
     ) {
-      console.log("🧹 Lösche Session:", id, {
-        expired,
-        pickedUpFlag,
-        orderTooOld,
-        orderIsPickedUp,
-      });
+      console.log("🧹 Lösche Session:", id);
 
-      await remove(ref(db, `sessions/${id}`));
+      deletePromises.push(remove(ref(db, `sessions/${id}`))); // 🔥 kein await
       continue;
     }
 
-    // aktive Sessions → deviceId merken
     if (session.deviceId) {
       activeDeviceIds.add(session.deviceId);
     }
   }
 
   // ============================
-  // 3. Devices aufräumen
+  // Devices
   // ============================
   for (const [deviceId, device] of Object.entries(devices)) {
-    const isUsed = activeDeviceIds.has(deviceId);
-
-    if (!isUsed) {
-      console.log("🗑️ Lösche Device ohne aktive Session:", deviceId);
-      await remove(ref(db, `devices/${deviceId}`));
+    if (!activeDeviceIds.has(deviceId)) {
+      console.log("🗑️ Lösche Device:", deviceId);
+      deletePromises.push(remove(ref(db, `devices/${deviceId}`)));
     }
   }
 
-  console.log("✨ Cleanup abgeschlossen.");
+  // 🔥 alles gleichzeitig ausführen
+  await Promise.all(deletePromises);
+
+  console.log(`✨ Cleanup abgeschlossen. (${deletePromises.length} Deletes)`);
 }
 
 // ============================
-// 🚀 Runner (wichtig!)
+// Runner
 // ============================
 cleanup()
   .then(async () => {
-    console.log("✅ Script beendet");
-
-    // Firebase sauber schließen (verhindert hängen!)
     await deleteApp(app);
 
-    process.exit(0);
+    // 🔥 garantiertes Beenden (wichtig für GitHub Actions)
+    setTimeout(() => process.exit(0), 500);
   })
   .catch(async (err) => {
-    console.error("❌ Fehler beim Cleanup:", err);
+    console.error("❌ Fehler:", err);
 
     try {
       await deleteApp(app);
     } catch {}
 
-    process.exit(1);
+    setTimeout(() => process.exit(1), 500);
   });
